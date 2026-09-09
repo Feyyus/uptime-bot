@@ -1,0 +1,89 @@
+import { Bot, InlineKeyboard, webhookCallback } from "grammy";
+
+const SITES = ["https://3x3.team", "http://31.28.5.203"];
+
+async function checkSites() {
+  const out = [];
+  for (const url of SITES) {
+    try {
+      const res = await fetch(url, { method: "GET", redirect: "follow" });
+      out.push({ url, code: res.status, ok: res.status >= 200 && res.status < 400 });
+    } catch {
+      out.push({ url, code: "нет ответа", ok: false });
+    }
+  }
+  return out;
+}
+
+function subscribeKeyboard(enabled) {
+  return new InlineKeyboard().text(
+    enabled ? "🔕 Отключить уведомления" : "🔔 Включить уведомления",
+    "toggle",
+  );
+}
+
+function buildBot(env) {
+  const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
+
+  // По умолчанию — подписан. Отключить можно кнопкой, ничего не нужно вводить руками.
+  bot.command("start", async (ctx) => {
+    const chatId = String(ctx.chat.id);
+    if ((await env.SUBSCRIBERS.get(chatId)) === null) {
+      await env.SUBSCRIBERS.put(chatId, "on");
+    }
+    const enabled = (await env.SUBSCRIBERS.get(chatId)) !== "off";
+    await ctx.reply(
+      "Слежу за 3x3.team и рабочей станцией. Раз в 10 минут проверяю тихо, " +
+        "пишу только если что-то упало.\n\nУведомления сейчас: " +
+        (enabled ? "включены ✅" : "выключены 🔕"),
+      { reply_markup: subscribeKeyboard(enabled) },
+    );
+  });
+
+  bot.command("status", async (ctx) => {
+    const results = await checkSites();
+    await ctx.reply(
+      results.map((r) => `${r.ok ? "✅" : "⚠️"} ${r.url} — ${r.code}`).join("\n"),
+    );
+  });
+
+  bot.on("callback_query:data", async (ctx) => {
+    if (ctx.callbackQuery.data !== "toggle") return;
+    const chatId = String(ctx.chat.id);
+    const wasOff = (await env.SUBSCRIBERS.get(chatId)) === "off";
+    await env.SUBSCRIBERS.put(chatId, wasOff ? "on" : "off");
+    const enabled = wasOff;
+    await ctx.editMessageReplyMarkup({ reply_markup: subscribeKeyboard(enabled) });
+    await ctx.answerCallbackQuery(enabled ? "Уведомления включены" : "Уведомления выключены");
+  });
+
+  return bot;
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const bot = buildBot(env);
+    return webhookCallback(bot, "cloudflare-mod")(request, env, ctx);
+  },
+
+  // Cron trigger — раз в 10 минут, молча если всё ок, шлёт всем подписанным при падении.
+  async scheduled(_event, env, _ctx) {
+    const results = await checkSites();
+    const down = results.filter((r) => !r.ok);
+    if (down.length === 0) return;
+
+    const text =
+      "⚠️ Проблема с сайтом:\n" + down.map((r) => `${r.url} — ${r.code}`).join("\n");
+
+    const list = await env.SUBSCRIBERS.list();
+    for (const key of list.keys) {
+      const val = await env.SUBSCRIBERS.get(key.name);
+      if (val === "off") continue;
+      await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: key.name, text }),
+      });
+    }
+  },
+};

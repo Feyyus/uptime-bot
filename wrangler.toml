@@ -1,0 +1,11 @@
+name = "3x3-uptime-bot"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+kv_namespaces = [
+  { binding = "SUBSCRIBERS", id = "fecff9f7a4864f61a8d8590676fc8491" }
+]
+
+[triggers]
+crons = ["*/10 * * * *"]
