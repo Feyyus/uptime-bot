@@ -6,7 +6,16 @@ async function checkSites() {
   const out = [];
   for (const url of SITES) {
     try {
-      const res = await fetch(url, { method: "GET", redirect: "follow" });
+      const res = await fetch(url, {
+        method: "GET",
+        redirect: "follow",
+        headers: {
+          // сервер режет запросы без нормального UA (Cloudflare Workers
+          // по умолчанию шлёт пустой/нетипичный) — прикидываемся браузером
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        },
+      });
       out.push({ url, code: res.status, ok: res.status >= 200 && res.status < 400 });
     } catch {
       out.push({ url, code: "нет ответа", ok: false });
