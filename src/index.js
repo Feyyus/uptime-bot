@@ -8,15 +8,19 @@ async function checkSites() {
     try {
       const res = await fetch(url, {
         method: "GET",
-        redirect: "follow",
+        redirect: "manual", // видим первый прыжок как есть, не даём fetch тихо уйти на другой хост
         headers: {
-          // сервер режет запросы без нормального UA (Cloudflare Workers
-          // по умолчанию шлёт пустой/нетипичный) — прикидываемся браузером
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 (uptime-check; 3x3-internal-monitoring)",
         },
       });
-      out.push({ url, code: res.status, ok: res.status >= 200 && res.status < 400 });
+      const isRedirect = res.status >= 300 && res.status < 400;
+      const location = isRedirect ? res.headers.get("location") : null;
+      out.push({
+        url,
+        code: location ? `${res.status} -> ${location}` : res.status,
+        ok: res.status >= 200 && res.status < 300,
+      });
     } catch {
       out.push({ url, code: "нет ответа", ok: false });
     }
