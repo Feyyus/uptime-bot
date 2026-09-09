@@ -1,6 +1,10 @@
 import { Bot, InlineKeyboard, webhookCallback } from "grammy";
 
-const SITES = ["https://3x3.team", "http://31.28.5.203"];
+// ecom (31.28.5.203) убран — Cloudflare Workers режет fetch() на голый IP по
+// plain HTTP ещё до выхода наружу (подтверждено: запрос не долетает до
+// сервера вообще, см. nginx access.log). Вернуть, когда у ecom появится
+// собственный домен.
+const SITES = ["https://3x3.team"];
 
 async function checkSites() {
   const out = [];
