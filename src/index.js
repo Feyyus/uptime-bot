@@ -8,9 +8,13 @@ const SITES = ["https://3x3.team", "https://ecom.try.3x3.team", "https://tracker
 
 const DISK_WARN_PERCENT = 85;
 
+const FETCH_TIMEOUT_MS = 5000;
+
 async function checkServerHealth() {
   try {
-    const res = await fetch("https://3x3.team/status.json");
+    const res = await fetch("https://3x3.team/status.json", {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) return { ok: false, reason: `status.json вернул ${res.status}` };
     const data = await res.json();
     const warnings = [];
@@ -23,30 +27,31 @@ async function checkServerHealth() {
   }
 }
 
-async function checkSites() {
-  const out = [];
-  for (const url of SITES) {
-    try {
-      const res = await fetch(url, {
-        method: "GET",
-        redirect: "manual", // видим первый прыжок как есть, не даём fetch тихо уйти на другой хост
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 (uptime-check; 3x3-internal-monitoring)",
-        },
-      });
-      const isRedirect = res.status >= 300 && res.status < 400;
-      const location = isRedirect ? res.headers.get("location") : null;
-      out.push({
-        url,
-        code: location ? `${res.status} -> ${location}` : res.status,
-        ok: res.status >= 200 && res.status < 300,
-      });
-    } catch {
-      out.push({ url, code: "нет ответа", ok: false });
-    }
+async function checkOneSite(url) {
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "manual", // видим первый прыжок как есть, не даём fetch тихо уйти на другой хост
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 (uptime-check; 3x3-internal-monitoring)",
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    const isRedirect = res.status >= 300 && res.status < 400;
+    const location = isRedirect ? res.headers.get("location") : null;
+    return {
+      url,
+      code: location ? `${res.status} -> ${location}` : res.status,
+      ok: res.status >= 200 && res.status < 300,
+    };
+  } catch {
+    return { url, code: "нет ответа", ok: false };
   }
-  return out;
+}
+
+async function checkSites() {
+  return Promise.all(SITES.map(checkOneSite));
 }
 
 function subscribeKeyboard(enabled) {
@@ -75,8 +80,7 @@ function buildBot(env) {
   });
 
   bot.command("status", async (ctx) => {
-    const results = await checkSites();
-    const health = await checkServerHealth();
+    const [results, health] = await Promise.all([checkSites(), checkServerHealth()]);
     const lines = results.map((r) => `${r.ok ? "✅" : "⚠️"} ${r.url} — ${r.code}`);
     lines.push(
       health.ok
@@ -107,9 +111,8 @@ export default {
 
   // Cron trigger — раз в 10 минут, молча если всё ок, шлёт всем подписанным при падении.
   async scheduled(_event, env, _ctx) {
-    const results = await checkSites();
+    const [results, health] = await Promise.all([checkSites(), checkServerHealth()]);
     const down = results.filter((r) => !r.ok);
-    const health = await checkServerHealth();
 
     if (down.length === 0 && health.ok) return;
 
