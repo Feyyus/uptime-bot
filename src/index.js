@@ -4,7 +4,24 @@ import { Bot, InlineKeyboard, webhookCallback } from "grammy";
 // plain HTTP ещё до выхода наружу (подтверждено: запрос не долетает до
 // сервера вообще, см. nginx access.log). Вернуть, когда у ecom появится
 // собственный домен.
-const SITES = ["https://3x3.team"];
+const SITES = ["https://3x3.team", "https://ecom.try.3x3.team", "https://tracker.3x3.team"];
+
+const DISK_WARN_PERCENT = 85;
+
+async function checkServerHealth() {
+  try {
+    const res = await fetch("https://3x3.team/status.json");
+    if (!res.ok) return { ok: false, reason: `status.json вернул ${res.status}` };
+    const data = await res.json();
+    const warnings = [];
+    if (data.disk_percent >= DISK_WARN_PERCENT) {
+      warnings.push(`диск заполнен на ${data.disk_percent}%`);
+    }
+    return { ok: warnings.length === 0, warnings, data };
+  } catch {
+    return { ok: false, reason: "status.json не отвечает" };
+  }
+}
 
 async function checkSites() {
   const out = [];
@@ -59,9 +76,14 @@ function buildBot(env) {
 
   bot.command("status", async (ctx) => {
     const results = await checkSites();
-    await ctx.reply(
-      results.map((r) => `${r.ok ? "✅" : "⚠️"} ${r.url} — ${r.code}`).join("\n"),
+    const health = await checkServerHealth();
+    const lines = results.map((r) => `${r.ok ? "✅" : "⚠️"} ${r.url} — ${r.code}`);
+    lines.push(
+      health.ok
+        ? `✅ сервер — диск ${health.data?.disk_percent ?? "?"}%, память ${health.data?.mem_percent ?? "?"}%`
+        : `⚠️ сервер — ${health.reason ?? health.warnings.join(", ")}`,
     );
+    await ctx.reply(lines.join("\n"));
   });
 
   bot.on("callback_query:data", async (ctx) => {
@@ -87,10 +109,18 @@ export default {
   async scheduled(_event, env, _ctx) {
     const results = await checkSites();
     const down = results.filter((r) => !r.ok);
-    if (down.length === 0) return;
+    const health = await checkServerHealth();
 
-    const text =
-      "⚠️ Проблема с сайтом:\n" + down.map((r) => `${r.url} — ${r.code}`).join("\n");
+    if (down.length === 0 && health.ok) return;
+
+    const parts = [];
+    if (down.length > 0) {
+      parts.push("⚠️ Проблема с сайтом:\n" + down.map((r) => `${r.url} — ${r.code}`).join("\n"));
+    }
+    if (!health.ok) {
+      parts.push("⚠️ Рабочая станция: " + (health.reason ?? health.warnings.join(", ")));
+    }
+    const text = parts.join("\n\n");
 
     const list = await env.SUBSCRIBERS.list();
     for (const key of list.keys) {
